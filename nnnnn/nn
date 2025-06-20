@@ -1,0 +1,88 @@
+from mininet.net import Mininet #bo danan w manage network la naw mininet
+from mininet.node import RemoteController, OVSSwitch #importy switch w controllerakan dakat
+from mininet.link import TCLink # bo darxstni packet delay w loose w diary krdni bandwidth 
+from mininet.cli import CLI # bo importkrdni cli interface wak ping w net w dump 
+from mininet.log import setLogLevel, info #display awa aka chana zanyari la naw terminalakatawa dira be wak show y debug yan mushkilayak kati run krdn
+from time import sleep   #kati xayanrawi  bayni downy c0 w c1
+import os  #bakardet bo chkeck krdni controllakan la kati runkrdna
+import threading #bardawam chawderi c0 dakat bo away agar down bw yaksar sayri algorithm bkaw bigore bo c1
+
+def greedy_failover(net, primary, backup): # implememnt the greedy algorithm and its parameters(, , ,)
+    """                     c0       c1
+    
+    Greedy Algorithm for Controller Failover:
+    - If primary controller (c0) fails, start the backup controller (c1).
+    """
+    #---net- – Represents the network topology (probably an instance of Mininet).
+    #--primary- – The primary path (or device, link, or route) used for forwarding traffic.
+    #--backup- – The backup path (or device, link, or route) that takes over if the primary fails.
+    info("\n*** Monitoring primary controller (c0) for failure ***\n")
+    
+    while True:  #The while True: loop in the greedy_failover function ((means that the function will continuously run until a failure)) is detected and handled.
+        # Check if c0 (Primary) is running
+        c0_status = os.system("lsof -i :6633 > /dev/null 2>&1")  # 0 means running, (!=0)controller means stopped
+        if c0_status != 0:
+            info("\n*** Primary controller (c0) FAILED! Starting backup (c1) ***\n")
+
+            # Start backup controller (c1)
+            net.addController(backup)
+            backup.start()
+
+            # Reassign all switches to c1
+            for switch in net.switches:
+                info(f"Reassigning {switch.name} to backup controller (c1)\n")
+                switch.cmd(f"ovs-vsctl set-controller {switch.name} tcp:127.0.0.1:6634")
+
+            info("\n*** Backup controller (c1) is now controlling the network ***\n")
+            break  # Exit monitoring loop after failover
+
+        sleep(1)  # Check every second
+
+def create_topology():
+    """ Creates an SDN topology with failover using the Greedy Algorithm """
+    net = Mininet(controller=None, switch=OVSSwitch, link=TCLink)  # No default controller
+
+    # Start only the primary controller (c0)
+    info("*** Adding Primary Controller (c0) ***\n")
+    c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633)
+
+    # Backup Controller (c1) is not started initially
+    c1 = RemoteController('c1', ip='127.0.0.1', port=6634)
+
+    # Switches
+    info("*** Adding Switches ***\n")
+    switches = {f's{i}': net.addSwitch(f's{i}') for i in range(1, 5)}
+
+    # Hosts
+    info("*** Adding Hosts ***\n")
+    hosts = {f'h{i}': net.addHost(f'h{i}') for i in range(1, 13)}
+
+    # Connect hosts to switches
+    for i in range(3):
+        net.addLink(hosts[f'h{i+1}'], switches['s1'])
+        net.addLink(hosts[f'h{i+4}'], switches['s2'])
+        net.addLink(hosts[f'h{i+7}'], switches['s3'])
+        net.addLink(hosts[f'h{i+10}'], switches['s4'])
+
+    # Connect switches to each other
+    net.addLink(switches['s1'], switches['s2'])
+    net.addLink(switches['s2'], switches['s3'])
+    net.addLink(switches['s3'], switches['s4'])
+
+    # Start network
+    info("*** Starting Network ***\n")
+    net.start()
+    info("\n*** Network started with Primary Controller (c0) ***\n")
+
+    # Run failover monitoring in a separate thread (so Mininet CLI remains functional)
+    threading.Thread(target=greedy_failover, args=(net, c0, c1), daemon=True).start()
+
+    # Open Mininet CLI for testing
+    CLI(net)
+
+    # Stop network on exit
+    net.stop()
+
+if name == 'main':
+    setLogLevel('info')
+    create_topology()
